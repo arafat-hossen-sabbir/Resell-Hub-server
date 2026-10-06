@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
+const { connectDB } = require("./config/db");
+
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -19,6 +21,12 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`ReSell Hub server running on port ${port}`);
-});
+const startServer = async () => {
+  await connectDB();
+
+  app.listen(port, () => {
+    console.log(`ReSell Hub server running on port ${port}`);
+  });
+};
+
+startServer();
