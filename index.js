@@ -4,6 +4,7 @@ require("dotenv").config();
 
 const { connectDB } = require("./config/db");
 const usersRouter = require("./routes/users");
+const productsRouter = require("./routes/products");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -20,6 +21,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/users", usersRouter);
+app.use("/api/products", productsRouter);
 
 const startServer = async () => {
   await connectDB();
