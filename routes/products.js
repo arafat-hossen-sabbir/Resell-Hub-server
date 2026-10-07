@@ -8,16 +8,60 @@ const router = express.Router();
 const invalidId = (res) =>
   res.status(400).json({ success: false, message: "Invalid product id" });
 
-// Public: শুধু approved product
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 router.get("/", async (req, res) => {
   try {
-    const products = await getDB()
-      .collection("products")
-      .find({ status: "approved" })
-      .sort({ createdAt: -1 })
+    const search = String(req.query.search || "").trim();
+    const category = String(req.query.category || "All");
+    const sort = String(req.query.sort || "newest");
+    const currentPage = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const productsPerPage = Math.min(
+      Math.max(parseInt(req.query.limit, 10) || 8, 1),
+      50,
+    );
+
+    const query = { status: "approved" };
+
+    if (search) {
+      const pattern = escapeRegex(search);
+      query.$or = [
+        { title: { $regex: pattern, $options: "i" } },
+        { category: { $regex: pattern, $options: "i" } },
+      ];
+    }
+
+    if (category !== "All") {
+      query.category = category;
+    }
+
+    const sortOptions = {
+      newest: { createdAt: -1 },
+      "price-asc": { price: 1 },
+      "price-desc": { price: -1 },
+    };
+    const sortOption = sortOptions[sort] || sortOptions.newest;
+
+    const collection = getDB().collection("products");
+    const totalProducts = await collection.countDocuments(query);
+
+    const products = await collection
+      .find(query)
+      .sort(sortOption)
+      .skip((currentPage - 1) * productsPerPage)
+      .limit(productsPerPage)
       .toArray();
 
-    res.json({ success: true, products });
+    res.json({
+      success: true,
+      products,
+      pagination: {
+        currentPage,
+        productsPerPage,
+        totalProducts,
+        totalPages: Math.ceil(totalProducts / productsPerPage),
+      },
+    });
   } catch {
     res
       .status(500)
@@ -25,7 +69,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Seller-এর নিজের product (সব status)। অবশ্যই "/:id" এর আগে থাকতে হবে
 router.get("/my", authenticate, async (req, res) => {
   try {
     const products = await getDB()
