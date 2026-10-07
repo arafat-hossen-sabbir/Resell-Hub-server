@@ -23,6 +23,12 @@ const connectDB = async () => {
     await client.connect();
     database = client.db("resellHub");
     await database.command({ ping: 1 });
+
+    // Email duplications আটকানোর জন্য unique index তৈরি করা হচ্ছে
+    await database
+      .collection("users")
+      .createIndex({ email: 1 }, { unique: true });
+
     console.log("MongoDB connected successfully");
   } catch (error) {
     console.error("MongoDB connection failed:", error.message);
