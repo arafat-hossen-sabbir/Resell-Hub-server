@@ -10,6 +10,12 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+const authenticate = require("./middleware/authMiddleware");
+
+app.get("/api/protected-test", authenticate, (req, res) => {
+  res.json({ success: true, user: req.user });
+});
+
 app.get("/", (req, res) => {
   res.send("ReSell Hub server is running");
 });
