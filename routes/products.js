@@ -2,6 +2,7 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
 const authenticate = require("../middleware/authMiddleware");
+const requireRole = require("../middleware/roleMiddleware");
 
 const router = express.Router();
 
@@ -107,77 +108,79 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", authenticate, async (req, res) => {
-  try {
-    const db = getDB();
-    const { title, category, condition, description } = req.body;
-    const price = Number(req.body.price);
-    const stock = Number(req.body.stock) || 1;
+router.post(
+  "/",
+  authenticate,
+  requireRole("seller", "admin"),
+  async (req, res) => {
+    try {
+      const db = getDB();
+      const { title, category, condition, description } = req.body;
+      const price = Number(req.body.price);
+      const stock = Number(req.body.stock) || 1;
 
-    if (!title || !category || !condition || !description) {
-      return res.status(400).json({
-        success: false,
-        message: "Required product information is missing",
+      if (!title || !category || !condition || !description) {
+        return res.status(400).json({
+          success: false,
+          message: "Required product information is missing",
+        });
+      }
+
+      if (!Number.isFinite(price) || price <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Price must be a positive number",
+        });
+      }
+
+      const seller = await db
+        .collection("users")
+        .findOne({ _id: new ObjectId(req.user.userId) });
+
+      if (!seller) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Seller account not found" });
+      }
+
+      const images = Array.isArray(req.body.images)
+        ? req.body.images.filter((img) => typeof img === "string")
+        : [];
+
+      const product = {
+        title: String(title).trim(),
+        category: String(category).trim(),
+        condition: String(condition).trim(),
+        price,
+        stock: Math.max(stock, 1),
+        images,
+        description: String(description).trim(),
+        sellerInfo: {
+          userId: seller._id.toString(),
+          name: seller.name,
+          email: seller.email,
+          phone: String(req.body.phone || seller.phone || ""),
+        },
+        location: String(req.body.location || seller.location || ""),
+        status: "pending",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const result = await db.collection("products").insertOne(product);
+
+      res.status(201).json({
+        success: true,
+        message: "Product created successfully",
+        product: { ...product, _id: result.insertedId },
       });
+    } catch {
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to create product" });
     }
-
-    if (!Number.isFinite(price) || price <= 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Price must be a positive number" });
-    }
-
-    if (!ObjectId.isValid(req.user.userId)) {
-      return res.status(401).json({ success: false, message: "Invalid token" });
-    }
-
-    const seller = await db
-      .collection("users")
-      .findOne({ _id: new ObjectId(req.user.userId) });
-
-    if (!seller) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Seller account not found" });
-    }
-
-    const images = Array.isArray(req.body.images)
-      ? req.body.images.filter((img) => typeof img === "string")
-      : [];
-
-    const product = {
-      title: String(title).trim(),
-      category: String(category).trim(),
-      condition: String(condition).trim(),
-      price,
-      stock: Math.max(stock, 1),
-      images,
-      description: String(description).trim(),
-      sellerInfo: {
-        userId: seller._id.toString(),
-        name: seller.name,
-        email: seller.email,
-        phone: String(req.body.phone || seller.phone || ""),
-      },
-      location: String(req.body.location || seller.location || ""),
-      status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await db.collection("products").insertOne(product);
-
-    res.status(201).json({
-      success: true,
-      message: "Product created successfully",
-      product: { ...product, _id: result.insertedId },
-    });
-  } catch {
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to create product" });
-  }
-});
+  },
+);
 
 router.patch("/:id", authenticate, async (req, res) => {
   try {
