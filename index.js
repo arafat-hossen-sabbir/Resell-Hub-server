@@ -6,6 +6,7 @@ const { connectDB } = require("./config/db");
 const usersRouter = require("./routes/users");
 const productsRouter = require("./routes/products");
 const wishlistRouter = require("./routes/wishlist");
+const ordersRouter = require("./routes/orders");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -24,6 +25,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/users", usersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/wishlist", wishlistRouter);
+app.use("/api/orders", ordersRouter);
 
 const startServer = async () => {
   await connectDB();
