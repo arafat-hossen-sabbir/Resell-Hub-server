@@ -6,7 +6,7 @@ REST API for the ReSell Hub second-hand marketplace. Built with Express, MongoDB
 
 ```bash
 npm install
-cp .env.example .env   # then fill in your own values
+cp .env.example .env  
 npm run dev
 ```
 
