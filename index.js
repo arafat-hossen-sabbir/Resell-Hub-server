@@ -8,6 +8,7 @@ const productsRouter = require("./routes/products");
 const wishlistRouter = require("./routes/wishlist");
 const ordersRouter = require("./routes/orders");
 const reviewsRouter = require("./routes/reviews");
+const paymentsRouter = require("./routes/payments");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -28,6 +29,7 @@ app.use("/api/products", productsRouter);
 app.use("/api/wishlist", wishlistRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/reviews", reviewsRouter);
+app.use("/api/payments", paymentsRouter);
 
 const startServer = async () => {
   await connectDB();
