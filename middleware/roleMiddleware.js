@@ -1,43 +1,49 @@
+const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
 
-const requireRole = (...roles) => {
-  return async (req, res, next) => {
+const requireRole =
+  (...allowedRoles) =>
+  async (req, res, next) => {
     try {
-      const db = getDB();
+      if (!req.user || !ObjectId.isValid(req.user.userId)) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Authentication required" });
+      }
 
-      const user = await db.collection("users").findOne({
-        email: req.user.email,
-      });
+      const user = await getDB()
+        .collection("users")
+        .findOne(
+          { _id: new ObjectId(req.user.userId) },
+          { projection: { role: 1, status: 1 } },
+        );
 
       if (!user) {
-        return res.status(404).json({
-          message: "User not found",
-        });
+        return res
+          .status(401)
+          .json({ success: false, message: "User not found" });
       }
 
       if (user.status === "blocked") {
+        return res
+          .status(403)
+          .json({ success: false, message: "Your account has been blocked" });
+      }
+
+      if (!allowedRoles.includes(user.role)) {
         return res.status(403).json({
-          message: "Your account has been blocked",
+          success: false,
+          message: "You do not have permission to perform this action",
         });
       }
 
-      if (!roles.includes(user.role)) {
-        return res.status(403).json({
-          message: "You do not have permission",
-        });
-      }
-
-      req.currentUser = user;
-
+      req.user.role = user.role;
       next();
-    } catch (error) {
-      console.error(error);
-
-      res.status(500).json({
-        message: "Authorization failed",
-      });
+    } catch {
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to verify permission" });
     }
   };
-};
 
 module.exports = requireRole;
