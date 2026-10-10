@@ -1,13 +1,12 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDB } = require("../config/db");
-const admin = require("../config/firebase");
+const { getAuth } = require("../config/firebase");
 const authenticate = require("../middleware/authMiddleware");
 const { createToken } = require("../utils/jwt");
 
 const router = express.Router();
 
-// Firebase login-এর পর client এটা call করে JWT পায়
 router.post("/sync", async (req, res) => {
   const authorization = req.headers.authorization || "";
   const idToken = authorization.startsWith("Bearer ")
@@ -22,8 +21,9 @@ router.post("/sync", async (req, res) => {
 
   let decoded;
   try {
-    decoded = await admin.auth().verifyIdToken(idToken);
-  } catch {
+    decoded = await getAuth().verifyIdToken(idToken);
+  } catch (error) {
+    console.error("Firebase verify failed:", error.code, error.message);
     return res
       .status(401)
       .json({ success: false, message: "Invalid Firebase token" });
@@ -74,7 +74,8 @@ router.post("/sync", async (req, res) => {
     });
 
     res.json({ success: true, user, token });
-  } catch {
+  } catch (error) {
+    console.error("User sync failed:", error.message);
     res.status(500).json({ success: false, message: "Failed to sync user" });
   }
 });
