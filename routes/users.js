@@ -147,4 +147,52 @@ router.patch("/me", authenticate, async (req, res) => {
   }
 });
 
+router.post("/become-seller", authenticate, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.user.userId)) {
+      return res.status(401).json({ success: false, message: "Invalid token" });
+    }
+
+    const users = getDB().collection("users");
+    const _id = new ObjectId(req.user.userId);
+    const user = await users.findOne({ _id });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (user.status === "blocked") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Your account has been blocked" });
+    }
+
+    if (user.role !== "buyer") {
+      return res.json({
+        success: true,
+        message: "You can already sell products",
+        user,
+      });
+    }
+
+    const updated = await users.findOneAndUpdate(
+      { _id, role: "buyer" },
+      { $set: { role: "seller", updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+
+    res.json({
+      success: true,
+      message: "You are now a seller",
+      user: updated || user,
+    });
+  } catch {
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update account" });
+  }
+});
+
 module.exports = router;
