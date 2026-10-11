@@ -20,7 +20,7 @@ const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
   .split(",")
   .map((origin) => origin.trim());
 
-app.use(cors({ origin: allowedOrigins }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 app.get("/", (req, res) => {
