@@ -84,8 +84,8 @@ router.post("/session", authMiddleware, async (req, res) => {
         },
       ],
       metadata: { orderId: order._id.toString(), buyerId: req.user.userId },
-      success_url: `${clientUrl()}/dashboard/payments?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${clientUrl()}/dashboard/orders?payment=cancelled`,
+      success_url: `${clientUrl()}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientUrl()}/checkout/${order._id}?payment=cancelled`,
     });
 
     res.json({ success: true, url: session.url });
@@ -115,12 +115,6 @@ router.post("/confirm", authMiddleware, async (req, res) => {
         .json({ success: false, message: "This payment is not yours" });
     }
 
-    if (session.payment_status !== "paid") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Payment has not been completed" });
-    }
-
     const db = getDB();
     await ensureIndex();
 
@@ -135,23 +129,43 @@ router.post("/confirm", authMiddleware, async (req, res) => {
         .json({ success: false, message: "Order not found" });
     }
 
+    const base = {
+      sessionId,
+      transactionId: String(session.payment_intent || sessionId),
+      buyerId: req.user.userId,
+      orderId: order._id,
+      productTitle: order.productTitle,
+      productImage: order.productImage || "",
+      amountBdt: order.totalPrice,
+      amountCharged: (session.amount_total || 0) / 100,
+      currency: String(session.currency || "").toUpperCase(),
+      method: "Card",
+    };
+
+    if (session.payment_status !== "paid") {
+      if (session.status === "expired") {
+        await db
+          .collection("payments")
+          .updateOne(
+            { sessionId },
+            { $setOnInsert: { ...base, status: "Failed", createdAt: new Date() } },
+            { upsert: true },
+          );
+      }
+
+      return res
+        .status(400)
+        .json({ success: false, message: "Payment has not been completed" });
+    }
+
     const refundNeeded = ["Cancelled", "Rejected"].includes(order.orderStatus);
 
     await db.collection("payments").updateOne(
       { sessionId },
       {
         $setOnInsert: {
-          sessionId,
-          transactionId: String(session.payment_intent || ""),
-          buyerId: req.user.userId,
-          orderId: order._id,
-          productTitle: order.productTitle,
-          productImage: order.productImage || "",
-          amountBdt: order.totalPrice,
-          amountCharged: (session.amount_total || 0) / 100,
-          currency: String(session.currency || "").toUpperCase(),
+          ...base,
           status: refundNeeded ? "Needs refund" : "Paid",
-          method: "Card",
           createdAt: new Date(),
         },
       },
@@ -167,7 +181,10 @@ router.post("/confirm", authMiddleware, async (req, res) => {
         );
     }
 
-    res.json({ success: true, refundNeeded });
+    const payment = await db.collection("payments").findOne({ sessionId });
+    const updatedOrder = await db.collection("orders").findOne({ _id: order._id });
+
+    res.json({ success: true, refundNeeded, payment, order: updatedOrder });
   } catch (error) {
     console.error("Payment confirm failed:", error.message);
     res

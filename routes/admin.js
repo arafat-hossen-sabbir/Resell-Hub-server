@@ -342,4 +342,209 @@ router.get("/orders", async (req, res) => {
   }
 });
 
+router.delete("/users/:id", async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return invalidId(res);
+
+    if (req.params.id === req.user.userId) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "You cannot delete your own account",
+        });
+    }
+
+    const result = await getDB()
+      .collection("users")
+      .deleteOne({ _id: new ObjectId(req.params.id) });
+
+    if (!result.deletedCount) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    res.json({ success: true, message: "User deleted" });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to delete user" });
+  }
+});
+
+router.delete("/products/:id", async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return invalidId(res);
+
+    const _id = new ObjectId(req.params.id);
+    const db = getDB();
+    const result = await db.collection("products").deleteOne({ _id });
+
+    if (!result.deletedCount) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Product not found" });
+    }
+
+    await db.collection("wishlists").deleteMany({ productId: _id });
+
+    res.json({ success: true, message: "Product deleted" });
+  } catch {
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to delete product" });
+  }
+});
+
+router.patch("/orders/:id/status", async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return invalidId(res);
+
+    const allowed = [
+      "Pending",
+      "Accepted",
+      "Processing",
+      "Shipped",
+      "Delivered",
+      "Cancelled",
+      "Rejected",
+    ];
+    const orderStatus = String(req.body.orderStatus || "");
+
+    if (!allowed.includes(orderStatus)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order status" });
+    }
+
+    const db = getDB();
+    const _id = new ObjectId(req.params.id);
+    const order = await db.collection("orders").findOne({ _id });
+
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+    }
+
+    if (["Cancelled", "Rejected"].includes(order.orderStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "A cancelled or rejected order cannot be changed",
+      });
+    }
+
+    const updated = await db
+      .collection("orders")
+      .findOneAndUpdate(
+        { _id },
+        { $set: { orderStatus, updatedAt: new Date() } },
+        { returnDocument: "after" },
+      );
+
+    if (["Cancelled", "Rejected"].includes(orderStatus)) {
+      await db
+        .collection("products")
+        .updateOne(
+          { _id: order.productId },
+          { $inc: { stock: order.quantity } },
+        );
+    }
+
+    res.json({ success: true, message: "Order updated", order: updated });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to update order" });
+  }
+});
+
+router.get("/analytics", async (req, res) => {
+  try {
+    const db = getDB();
+    const now = new Date();
+    const since = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1),
+    );
+    const byMonth = {
+      $dateToString: { format: "%Y-%m", date: "$createdAt" },
+    };
+
+    const [userGrowth, monthlyOrders, categoryPerformance, topCategories] =
+      await Promise.all([
+        db
+          .collection("users")
+          .aggregate([
+            { $match: { createdAt: { $gte: since } } },
+            { $group: { _id: byMonth, count: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("orders")
+          .aggregate([
+            { $match: { createdAt: { $gte: since } } },
+            { $group: { _id: byMonth, count: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("orders")
+          .aggregate([
+            { $match: { orderStatus: { $nin: NOT_COUNTED } } },
+            {
+              $lookup: {
+                from: "products",
+                localField: "productId",
+                foreignField: "_id",
+                as: "product",
+              },
+            },
+            { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } },
+            {
+              $group: {
+                _id: { $ifNull: ["$product.category", "Other"] },
+                revenue: { $sum: "$totalPrice" },
+                orders: { $sum: 1 },
+              },
+            },
+            { $sort: { revenue: -1 } },
+          ])
+          .toArray(),
+        db
+          .collection("products")
+          .aggregate([
+            { $match: { status: "approved" } },
+            { $group: { _id: "$category", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+            { $limit: 5 },
+          ])
+          .toArray(),
+      ]);
+
+    res.json({
+      success: true,
+      analytics: {
+        userGrowth: userGrowth.map((row) => ({
+          key: row._id,
+          value: row.count,
+        })),
+        monthlyOrders: monthlyOrders.map((row) => ({
+          key: row._id,
+          value: row.count,
+        })),
+        categoryPerformance: categoryPerformance.map((row) => ({
+          label: row._id,
+          value: row.revenue,
+          orders: row.orders,
+        })),
+        topCategories: topCategories.map((row) => ({
+          label: row._id,
+          value: row.count,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Analytics failed:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load analytics" });
+  }
+});
+
 module.exports = router;
