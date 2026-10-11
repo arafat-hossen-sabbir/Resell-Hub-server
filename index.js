@@ -11,11 +11,16 @@ const reviewsRouter = require("./routes/reviews");
 const paymentsRouter = require("./routes/payments");
 const paymentHistoryRouter = require("./routes/paymentHistory");
 const adminRouter = require("./routes/admin");
+const publicRouter = require("./routes/public");
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim());
+
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -26,6 +31,7 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "ReSell Hub API is healthy" });
 });
 
+app.use("/api/public", publicRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/wishlist", wishlistRouter);
