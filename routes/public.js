@@ -37,7 +37,7 @@ router.get("/categories", async (req, res) => {
     const rows = await getDB()
       .collection("products")
       .aggregate([
-        { $match: { status: "approved" } },
+        { $match: { status: "approved", category: { $ne: null } } },
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ])
       .toArray();
@@ -46,7 +46,7 @@ router.get("/categories", async (req, res) => {
     const names = [
       ...DEFAULT_CATEGORIES,
       ...Object.keys(counts).filter(
-        (name) => !DEFAULT_CATEGORIES.includes(name),
+        (name) => name && name !== "null" && !DEFAULT_CATEGORIES.includes(name),
       ),
     ];
 
