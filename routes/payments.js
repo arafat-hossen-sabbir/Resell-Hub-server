@@ -6,164 +6,173 @@ const stripe = require("../utils/stripe");
 
 const router = express.Router();
 
-router.post("/create-intent", authMiddleware, async (req, res) => {
+const clientUrl = () =>
+  (process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim();
+
+const toMinorUnits = (totalPrice) => {
+  const currency = (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
+  const rate = Number(process.env.USD_BDT_RATE) || 120;
+  const amount =
+    currency === "bdt"
+      ? Math.round(totalPrice * 100)
+      : Math.round((totalPrice / rate) * 100);
+
+  return { currency, amount: Math.max(amount, 50) };
+};
+
+let indexReady = false;
+
+const ensureIndex = async () => {
+  if (indexReady) return;
+  await getDB()
+    .collection("payments")
+    .createIndex({ sessionId: 1 }, { unique: true, sparse: true });
+  indexReady = true;
+};
+
+router.post("/session", authMiddleware, async (req, res) => {
   try {
-    const db = getDB();
     const { orderId } = req.body;
 
-    if (!orderId) {
-      return res.status(400).json({
-        message: "Order ID is required",
-      });
+    if (!ObjectId.isValid(orderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Valid order id is required" });
     }
 
-    const order = await db.collection("orders").findOne({
-      _id: new ObjectId(orderId),
-    });
+    const order = await getDB()
+      .collection("orders")
+      .findOne({
+        _id: new ObjectId(orderId),
+        "buyerInfo.userId": req.user.userId,
+      });
 
     if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
-    }
-
-    if (order.buyerInfo.userId !== req.user.userId) {
-      return res.status(403).json({
-        message: "You can only pay for your own orders",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     if (order.paymentStatus === "Paid") {
+      return res
+        .status(400)
+        .json({ success: false, message: "This order is already paid" });
+    }
+
+    if (["Cancelled", "Rejected"].includes(order.orderStatus)) {
       return res.status(400).json({
-        message: "This order has already been paid",
+        success: false,
+        message: "A cancelled or rejected order cannot be paid",
       });
     }
 
-    if (order.orderStatus === "Cancelled") {
-      return res.status(400).json({
-        message: "Cancelled orders cannot be paid",
-      });
-    }
+    const { currency, amount } = toMinorUnits(order.totalPrice);
 
-    const conversionRate = Number(process.env.USD_BDT_RATE || 120);
-
-    const amountInCents = Math.round(
-      (Number(order.totalPrice) / conversionRate) * 100,
-    );
-
-    if (amountInCents < 50) {
-      return res.status(400).json({
-        message: "Payment amount is too small",
-      });
-    }
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountInCents,
-      currency: process.env.STRIPE_CURRENCY || "usd",
-      metadata: {
-        orderId: order._id.toString(),
-        buyerId: req.user.userId,
-      },
-      automatic_payment_methods: {
-        enabled: true,
-      },
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: order.buyerInfo.email,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: amount,
+            product_data: {
+              name: `${order.productTitle} (x${order.quantity})`,
+            },
+          },
+        },
+      ],
+      metadata: { orderId: order._id.toString(), buyerId: req.user.userId },
+      success_url: `${clientUrl()}/dashboard/payments?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientUrl()}/dashboard/orders?payment=cancelled`,
     });
 
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-      amount: amountInCents,
-    });
+    res.json({ success: true, url: session.url });
   } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: "Failed to create payment intent",
-    });
+    console.error("Checkout session failed:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Could not start the payment" });
   }
 });
 
 router.post("/confirm", authMiddleware, async (req, res) => {
   try {
+    const sessionId = String(req.body.sessionId || "");
+
+    if (!sessionId.startsWith("cs_")) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid payment session" });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.metadata?.buyerId !== req.user.userId) {
+      return res
+        .status(403)
+        .json({ success: false, message: "This payment is not yours" });
+    }
+
+    if (session.payment_status !== "paid") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Payment has not been completed" });
+    }
+
     const db = getDB();
-    const { paymentIntentId } = req.body;
-
-    if (!paymentIntentId) {
-      return res.status(400).json({
-        message: "Payment intent ID is required",
-      });
-    }
-
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-    if (paymentIntent.metadata.buyerId !== req.user.userId) {
-      return res.status(403).json({
-        message: "Payment does not belong to this buyer",
-      });
-    }
-
-    if (paymentIntent.status !== "succeeded") {
-      return res.status(400).json({
-        message: "Payment has not been completed",
-        status: paymentIntent.status,
-      });
-    }
-
-    const orderId = paymentIntent.metadata.orderId;
+    await ensureIndex();
 
     const order = await db.collection("orders").findOne({
-      _id: new ObjectId(orderId),
+      _id: new ObjectId(session.metadata.orderId),
+      "buyerInfo.userId": req.user.userId,
     });
 
     if (!order) {
-      return res.status(404).json({
-        message: "Order not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
-    const existingPayment = await db.collection("payments").findOne({
-      transactionId: paymentIntent.id,
-    });
+    const refundNeeded = ["Cancelled", "Rejected"].includes(order.orderStatus);
 
-    if (existingPayment) {
-      return res.json({
-        message: "Payment already recorded",
-        payment: existingPayment,
-      });
-    }
-
-    const payment = {
-      orderId: new ObjectId(orderId),
-      transactionId: paymentIntent.id,
-      buyerId: req.user.userId,
-      amount: order.totalPrice,
-      paymentStatus: "Paid",
-      method: "Card",
-      date: new Date(),
-    };
-
-    await db.collection("payments").insertOne(payment);
-
-    await db.collection("orders").updateOne(
-      { _id: new ObjectId(orderId) },
+    await db.collection("payments").updateOne(
+      { sessionId },
       {
-        $set: {
-          paymentStatus: "Paid",
-          updatedAt: new Date(),
+        $setOnInsert: {
+          sessionId,
+          transactionId: String(session.payment_intent || ""),
+          buyerId: req.user.userId,
+          orderId: order._id,
+          productTitle: order.productTitle,
+          productImage: order.productImage || "",
+          amountBdt: order.totalPrice,
+          amountCharged: (session.amount_total || 0) / 100,
+          currency: String(session.currency || "").toUpperCase(),
+          status: refundNeeded ? "Needs refund" : "Paid",
+          method: "Card",
+          createdAt: new Date(),
         },
       },
+      { upsert: true },
     );
 
-    res.json({
-      message: "Payment confirmed successfully",
-      payment,
-    });
-  } catch (error) {
-    console.error(error);
+    if (!refundNeeded) {
+      await db
+        .collection("orders")
+        .updateOne(
+          { _id: order._id },
+          { $set: { paymentStatus: "Paid", paidAt: new Date() } },
+        );
+    }
 
-    res.status(500).json({
-      message: "Failed to confirm payment",
-    });
+    res.json({ success: true, refundNeeded });
+  } catch (error) {
+    console.error("Payment confirm failed:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Could not confirm the payment" });
   }
 });
 

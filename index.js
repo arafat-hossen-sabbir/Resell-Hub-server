@@ -11,7 +11,6 @@ const reviewsRouter = require("./routes/reviews");
 const paymentsRouter = require("./routes/payments");
 const paymentHistoryRouter = require("./routes/paymentHistory");
 const adminRouter = require("./routes/admin");
-const adminDashboardRouter = require("./routes/adminDashboard");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -35,7 +34,6 @@ app.use("/api/reviews", reviewsRouter);
 app.use("/api/payments", paymentsRouter);
 app.use("/api/payment-history", paymentHistoryRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api/admin-dashboard", adminDashboardRouter);
 
 const startServer = async () => {
   await connectDB();
